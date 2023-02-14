@@ -96,14 +96,14 @@ def parse_status(homework):
 
     if homework_name is None:
         raise HomeworkMissingException(
-            f'Отсутствует: {homework_name}')
+            f'`homework_name` отсутствует: {homework_name}')
     if homework_status not in HOMEWORK_VERDICTS:
         error_message = (
-            f'Неизвестный статус домашней работы: {homework_status}')
+            f'Получен неизвестный статус работы: {homework_status}')
         logger.exception(error_message)
         raise UnknownStatusException(error_message)
     verdict = HOMEWORK_VERDICTS.get(homework_status)
-    return f'Новый статус проверки "{homework_name}". {verdict}'
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def check_tokens():
