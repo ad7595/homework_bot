@@ -31,7 +31,6 @@ HOMEWORK_VERDICTS = {
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
 
-errors_occured = {}
 
 formatter = logging.Formatter(
     '%(asctime)s [%(levelname)s] %(message)s')
@@ -51,42 +50,36 @@ def send_message(bot, message):
     except Exception as error:
         error_message = f'При отправке сообщения произошла ошибка: {error}'
         logger.exception(error_message)
-        raise TelegramAPIException(error_message)
+        return TelegramAPIException(error_message)
 
 
 def get_api_answer(current_timestamp):
     """Делает запрос к единственному эндпоинту API-сервиса."""
-    timestamp = current_timestamp or int(time.time())
+    timestamp = current_timestamp
     params = {'from_date': timestamp}
     try:
         response = requests.get(ENDPOINT, headers=HEADERS, params=params)
-        if response.status_code == HTTPStatus.OK:
-            return response.json()
-        raise HTTPError()
-    except (HTTPError, ConnectionRefusedError) as error:
-        error_message = f'{ENDPOINT} недоступен: {error}'
-        logger.exception(error_message)
-        raise HTTPError(error_message)
-    except Exception as error:
-        error_message = f'Ошибка при запросе к API: {error}'
-        logger.exception(error_message)
-        raise Exception(error_message)
+        if response.status_code != HTTPStatus.OK:
+            logger.error(f'{ENDPOINT}, не передает данные')
+            raise HTTPError(f'{ENDPOINT} не передает данные')
+        return response.json()
+    except requests.RequestException as i:
+        logger.error(f'{ENDPOINT} не передает данные: {i}')
+        raise Exception('exeption')
 
 
 def check_response(response):
     """Проверяет ответ API на корректность."""
-    logger.debug('Проверка ответа на корректность.')
-
-    if (isinstance(response, dict)
-            and len(response) != 0
-            and 'homeworks' in response
-            and 'current_date' in response
-            and isinstance(response.get('homeworks'), list)):
-        return response.get('homeworks')
-    else:
-        error_message = 'Ответ API не соответствует ожиданию!'
-        logger.exception(error_message)
-        raise IncorrectResponseException(error_message)
+    if not isinstance(response, dict):
+        raise IncorrectResponseException('response не является словарем')
+    homeworks = response.get('homeworks')
+    if 'homeworks' not in response:
+        raise IncorrectResponseException('Нет ключа "homeworks" в response')
+    if 'current_date' not in response:
+        raise IncorrectResponseException('Нет ключа "current_date" в response')
+    if not isinstance(homeworks, list):
+        raise IncorrectResponseException('"homeworks" не является списком')
+    return homeworks
 
 
 def parse_status(homework):
@@ -124,21 +117,24 @@ def main():
         raise SystemExit('Ошибка, бот остановлен!')
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    current_timestamp = int(time.time())
-    cache_cleared = current_timestamp
+    current_timestamp = int(time.time()) - RETRY_PERIOD
 
     while True:
-        if int(time.time()) - cache_cleared > ERROR_CACHE_LIFETIME:
-            errors_occured.clear()
         try:
             response = get_api_answer(current_timestamp)
+            current_timestamp = response.get('current_date')
             homeworks = check_response(response)
             if homeworks:
                 message = parse_status(homeworks[0])
                 send_message(bot, message)
             else:
                 logger.debug('Нет новых статусов')
-            current_timestamp = int(time.time())
+            current_timestamp = int(time.time()) - RETRY_PERIOD
+        except IncorrectResponseException:
+            logger.error('Ошибка по ключу "current_date"')
+        except Exception as error:
+            logger.error(f'Что то сломалось при отправке, {error}')
+            send_message(bot, message)
         finally:
             time.sleep(RETRY_PERIOD)
 
