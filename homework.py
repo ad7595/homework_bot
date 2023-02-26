@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from requests import HTTPError
 
 from exceptions import (HomeworkMissingException, IncorrectResponseException,
-                        TelegramAPIException, UnknownStatusException)
+                        UnknownStatusException, ResponseJsonError)
 
 load_dotenv()
 
@@ -24,6 +24,8 @@ RETRY_PERIOD: int = 600
 ERROR_CACHE_LIFETIME: int = 60 * 60 * 24
 
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
+
+LAST_MESSAGE = ''
 
 HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
@@ -42,6 +44,11 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
+def check_last_message(message, last_message=LAST_MESSAGE):
+    """Исключает повторную отправку последнего сообщения."""
+    return message != last_message
+
+
 def send_message(bot, message):
     """Отправляет сообщение в Telegram чат."""
     try:
@@ -50,7 +57,6 @@ def send_message(bot, message):
     except Exception as error:
         error_message = f'При отправке сообщения произошла ошибка: {error}'
         logger.exception(error_message)
-        return TelegramAPIException(error_message)
 
 
 def get_api_answer(current_timestamp):
@@ -59,13 +65,21 @@ def get_api_answer(current_timestamp):
     params = {'from_date': timestamp}
     try:
         response = requests.get(ENDPOINT, headers=HEADERS, params=params)
-        if response.status_code != HTTPStatus.OK:
-            logger.error(f'{ENDPOINT}, не передает данные')
-            raise HTTPError(f'{ENDPOINT} не передает данные')
-        return response.json()
     except requests.RequestException as i:
         logger.error(f'{ENDPOINT} не передает данные: {i}')
         raise Exception('exeption')
+
+    if response.status_code != HTTPStatus.OK:
+        logger.error(f'{ENDPOINT}, не передает данные')
+        raise HTTPError(f'{ENDPOINT} не передает данные')
+
+    try:
+        response_json = response.json()
+    except Exception:
+        raise ResponseJsonError
+    else:
+        logger.info('Ответ API получен')
+        return response_json
 
 
 def check_response(response):
@@ -93,7 +107,6 @@ def parse_status(homework):
     if homework_status not in HOMEWORK_VERDICTS:
         error_message = (
             f'Получен неизвестный статус работы: {homework_status}')
-        logger.exception(error_message)
         raise UnknownStatusException(error_message)
     verdict = HOMEWORK_VERDICTS.get(homework_status)
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
@@ -104,8 +117,6 @@ def check_tokens():
     params = [PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID]
     available = all(params)
     if not available:
-        logger.critical('Отсутствует обязательная переменная окружения,'
-                        'Программа приостановлена.')
         return False
     return True
 
@@ -118,7 +129,7 @@ def main():
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time()) - RETRY_PERIOD
-
+    last_message_error = ''
     while True:
         try:
             response = get_api_answer(current_timestamp)
@@ -129,12 +140,12 @@ def main():
                 send_message(bot, message)
             else:
                 logger.debug('Нет новых статусов')
-            current_timestamp = int(time.time()) - RETRY_PERIOD
-        except IncorrectResponseException:
-            logger.error('Ошибка по ключу "current_date"')
         except Exception as error:
             logger.error(f'Что то сломалось при отправке, {error}')
             send_message(bot, message)
+            if check_last_message(message, last_message_error):
+                bot.send_message(TELEGRAM_CHAT_ID, message)
+                last_message_error = message
         finally:
             time.sleep(RETRY_PERIOD)
 

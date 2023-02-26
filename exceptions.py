@@ -10,13 +10,15 @@ class UnknownStatusException(KeyError):
     pass
 
 
-class TelegramAPIException(Exception):
-    """Telegram API не вернул ответ."""
-
-    pass
-
-
 class HomeworkMissingException(Exception):
     """В ответе API домашки нет ключа `homework_name`."""
 
     pass
+
+
+class ResponseJsonError(Exception):
+    """Ошибка формата ответа API"""
+
+    def __init__(self, message='Ответ API не в формате JSON'):
+        self.message = message
+        super().__init__(self.message)
