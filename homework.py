@@ -25,8 +25,6 @@ ERROR_CACHE_LIFETIME: int = 60 * 60 * 24
 
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
-LAST_MESSAGE = ''
-
 HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
@@ -42,11 +40,6 @@ logger.setLevel(logging.DEBUG)
 handler = StreamHandler(stream=stdout)
 handler.setFormatter(formatter)
 logger.addHandler(handler)
-
-
-def check_last_message(message, last_message=LAST_MESSAGE):
-    """Исключает повторную отправку последнего сообщения."""
-    return message != last_message
 
 
 def send_message(bot, message):
@@ -66,20 +59,18 @@ def get_api_answer(current_timestamp):
     try:
         response = requests.get(ENDPOINT, headers=HEADERS, params=params)
     except requests.RequestException as i:
-        logger.error(f'{ENDPOINT} не передает данные: {i}')
-        raise Exception('exeption')
-
+        raise Exception(f'{ENDPOINT} не передает данные: {i}')
     if response.status_code != HTTPStatus.OK:
-        logger.error(f'{ENDPOINT}, не передает данные')
-        raise HTTPError(f'{ENDPOINT} не передает данные')
-
+        raise HTTPError(
+            f'Ответ от сервера не соответствует ожиданию:'
+            f'{response.status_code}'
+        )
     try:
         response_json = response.json()
-    except Exception:
-        raise ResponseJsonError
-    else:
         logger.info('Ответ API получен')
         return response_json
+    except Exception:
+        raise ResponseJsonError
 
 
 def check_response(response):
@@ -116,9 +107,7 @@ def check_tokens():
     """Проверяет доступность переменных окружения."""
     params = [PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID]
     available = all(params)
-    if not available:
-        return False
-    return True
+    return available
 
 
 def main():
@@ -133,7 +122,9 @@ def main():
     while True:
         try:
             response = get_api_answer(current_timestamp)
-            current_timestamp = response.get('current_date')
+            current_timestamp = response.get(
+                'current_data', int(time.time())
+            )
             homeworks = check_response(response)
             if homeworks:
                 message = parse_status(homeworks[0])
@@ -141,10 +132,10 @@ def main():
             else:
                 logger.debug('Нет новых статусов')
         except Exception as error:
-            logger.error(f'Что то сломалось при отправке, {error}')
-            send_message(bot, message)
-            if check_last_message(message, last_message_error):
-                bot.send_message(TELEGRAM_CHAT_ID, message)
+            message = f'Что то сломалось при отправке, {error}'
+            logger.error(message)
+            if message != last_message_error:
+                send_message(bot, message)
                 last_message_error = message
         finally:
             time.sleep(RETRY_PERIOD)
