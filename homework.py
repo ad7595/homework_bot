@@ -122,9 +122,6 @@ def main():
     while True:
         try:
             response = get_api_answer(current_timestamp)
-            current_timestamp = response.get(
-                'current_data', int(time.time())
-            )
             homeworks = check_response(response)
             if homeworks:
                 message = parse_status(homeworks[0])
@@ -132,11 +129,13 @@ def main():
             else:
                 logger.debug('Нет новых статусов')
         except Exception as error:
-            message = f'Что то сломалось при отправке, {error}'
+            message = f'Что-то сломалось при отправке, {error}'
             logger.error(message)
             if message != last_message_error:
                 send_message(bot, message)
                 last_message_error = message
+            else:
+                last_message_error = ''
         finally:
             time.sleep(RETRY_PERIOD)
 
